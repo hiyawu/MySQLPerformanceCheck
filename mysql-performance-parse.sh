@@ -25,6 +25,9 @@
 # prompted for input each time you run this script.                     #
 #                                                                       #
 #########################################################################
+# runmode: 0:local, 1:output to web
+runmode="1"
+linemode="Y"
 socket=
 
 function colorize() {
@@ -68,13 +71,63 @@ function colorize() {
   fi
 }
 
+function cecholine()
+{
+  if [ "0" == ${runmode} ]; then
+    echo ""
+  else
+    return
+  fi
+}
+
+function cechofirstline()
+{
+  if [ "0" == ${runmode} ]; then
+    echo ""
+  else
+    printf "{\"lines\":[{\"messages\":["
+  fi
+}
+
+function cecholastline()
+{
+  if [ "0" == ${runmode} ]; then
+    echo ""
+  else
+    printf "{\"messages\":[{\"font\":\"\",\"color\":\"black\",\"message\":\"\"}]}]}"
+    #echo ""
+    if [ -f $inputfile ]; then
+        if [ "./output.txt" != $inputfile ]; then
+          rm -f $inputfile
+        fi
+    fi
+    if [ -f $outputfile ] ; then
+      rm -f $outputfile
+    fi
+    if [ -f $tmpinputfile ] ; then
+      rm -f $tmpinputfile
+    fi
+  fi
+}
+
 function cecho()
 {
   if [ -z "${1-}" ]; then
     cecho "No message passed." "${2-}"
     return $?
   fi
-  cechon "$1"$'\n' "${2-}" "${3-}"
+  if [ "0" == ${runmode} ]; then
+    cechon "$1"$'\n' "${2-}" "${3-}"
+  else
+    if [ -z ${linemode} ]; then
+      printf "{\"messages\":["
+      linemode="Y"
+    fi
+    cechon "$1" "${2-}" "${3-}" 0
+    printf "]},"
+    linemode=""
+    #echo ""
+  fi
   return $?
 }
 
@@ -93,20 +146,50 @@ function cechon()
   #change it for fun
   #We use pure names
   color=${2:-black}             # Defaults to black, if not specified.
-
-  colorize "$color"
-  printf "%s"  "$message"
-  colorize ""                   # Reset to normal.
-  
+  local echocolor="${color}"
+  local currentmessage="${message//\"/\\\\\\\"}"
+  if [ "0" == ${runmode} ]; then
+    colorize "$color"
+    printf "%s"  "$message"
+    colorize ""                   # Reset to normal.
+  else
+    if [ -z ${linemode} ]; then
+      printf "{\"messages\":["
+      linemode="Y"
+    fi
+    case $color in
+        bold*)
+          printf "{\"font\":\"%s\"," "bold" ;;
+        *)
+          printf "{\"font\":\"%s\"," "" ;;
+    esac
+    echocolor="${echocolor#bold}"
+    printf "\"color\":\"%s\"," "$echocolor"
+    printf "\"message\":\"%s\"}" "$currentmessage"
+    if [ -z "${4-}" ]; then
+      printf ","
+    fi
+  fi
   if [ -z "${3-}"  ]; then 
   	echo $message >> $outputfile
   fi
 
-return
+  return
+}
+
+function validate_url(){
+  url=${1}
+  status=$(curl -o /dev/null --silent --head --write-out '%{http_code}' "$url")
+  if [ $status == '200' -o $status == '301' -o $status = '302' ]
+    then
+      return
+    else
+      echo "$url: NOT RESPONDING"
+    fi
 }
 
 function read_input() {
-	sort $inputfile|uniq > $tmpinputfile
+	sort ${inputfile}|uniq > ${tmpinputfile}
 	echo `sed s/[[:space:]]//g $tmpinputfile | sed '/^$/d'` > $tmpinputfile
 }
 
@@ -281,7 +364,7 @@ function second_login_failed()
       cecho "~/.my.cnf already exists!" boldred
       printf "\n"
       read -p "Replace ? [y/N] : " REPLY
-      if [ "$REPLY" = 'y' ] || [ "$REPLY" = 'Y' ] ; then 
+      if [ "$REPLY" = 'y' ] || [ "$REPLY" = 'Y' ] ; then
         write_mycnf "${HOME}/.my.cnf" "$socket" "$user" "$pass"
         if [ "$answer1" != 'yes' ] ; then
           exit 1
@@ -504,7 +587,7 @@ post_uptime_warning () {
 		cecho "Avg. qps = $queries_per_sec"
 		cecho "Total Questions = $questions"
 		cecho "Threads Connected = $threads"
-        echo
+        cecho ""
 
         if [ $uptime -gt 172800 ] ; then
                 cecho "Server has been running for over 48hrs."
@@ -515,7 +598,7 @@ post_uptime_warning () {
                 cecho "It may not be safe to use these recommendations" boldred
 
         fi
-        echo ""
+        cecho ""
         cecho "To find out more information on how each of these" red
         cecho "runtime variables effects performance visit:" red
         if [ "$major_version" = '3.23' ] || [ "$major_version" = '4.0' ] || [ "$major_version" = '4.1' ] ; then
@@ -614,7 +697,7 @@ check_used_connections () {
 
 ## -- Used Connections -- ##
 		
-	    max_connections=`parse_output $tmpinputfile "max_connections"`
+	  max_connections=`parse_output $tmpinputfile "max_connections"`
 		max_used_connections=`parse_output $tmpinputfile "max_used_connections"`
 		threads_connected=`parse_output $tmpinputfile "threads_connected"`
 		connections_ratio=`parse_output $tmpinputfile "connections_ratio"`
@@ -656,12 +739,12 @@ check_threads() {
 
 ## -- Worker Threads -- ##
 
-        cecho "WORKER THREADS" boldblue 0
+      cecho "WORKER THREADS" boldblue 0
 	    threads_cached=`parse_output $tmpinputfile "threads_cached"`
-		uptime=`parse_output $tmpinputfile "uptime"`
-		thread_cache_size=`parse_output $tmpinputfile "thread_cache_size"`
-		historic_threads_per_sec=`parse_output $tmpinputfile "historic_threads_per_sec"`
-		current_threads_per_sec=`parse_output $tmpinputfile "current_threads_per_sec"`
+		  uptime=`parse_output $tmpinputfile "uptime"`
+		  thread_cache_size=`parse_output $tmpinputfile "thread_cache_size"`
+		  historic_threads_per_sec=`parse_output $tmpinputfile "historic_threads_per_sec"`
+		  current_threads_per_sec=`parse_output $tmpinputfile "current_threads_per_sec"`
 
 	    cecho "Current thread_cache_size = $thread_cache_size"
 	    cecho "Current threads_cached = $threads_cached"
@@ -683,8 +766,8 @@ check_key_buffer_size () {
 
 ## -- Key buffer Size -- ##
 
-        cecho "KEY BUFFER" boldblue 0
-	    key_read_requests=`parse_output $tmpinputfile "key_read_requests"`
+    cecho "KEY BUFFER" boldblue 0
+	  key_read_requests=`parse_output $tmpinputfile "key_read_requests"`
 		key_reads=`parse_output $tmpinputfile "key_reads"`
 		key_blocks_used=`parse_output $tmpinputfile "key_blocks_used"`
 		key_blocks_unused=`parse_output $tmpinputfile "key_blocks_unused"`
@@ -710,13 +793,13 @@ check_key_buffer_size () {
                 fi
         fi
 
-	 	human_readable $myisam_indexes myisam_indexesHR
-	        cecho "Current MyISAM index space = $myisam_indexesHR $unit"
+        human_readable $myisam_indexes myisam_indexesHR
+        cecho "Current MyISAM index space = $myisam_indexesHR $unit"
 
-	        human_readable  $key_buffer_size key_buffer_sizeHR
-	        cecho "Current key_buffer_size = $key_buffer_sizeHR $unit"
-	        cecho "Key cache miss rate is 1 : $key_cache_miss_rate"
-	        cecho "Key buffer free ratio = $key_buffer_freeRND %"
+	      human_readable  $key_buffer_size key_buffer_sizeHR
+	      cecho "Current key_buffer_size = $key_buffer_sizeHR $unit"
+	      cecho "Key cache miss rate is 1 : $key_cache_miss_rate"
+	      cecho "Key buffer free ratio = $key_buffer_freeRND %"
 
         if [ "$major_version" = '5.1' ] && [ $mysql_version_num -lt 050123 ] ; then
                 if [ $key_buffer_size -ge 4294967296 ] && ( echo "x86_64 ppc64 ia64 sparc64 i686" | grep -q $mysql_version_compile_machine ) ; then
@@ -756,8 +839,8 @@ check_query_cache () {
 
 ## -- Query Cache -- ##
 
-        cecho "QUERY CACHE" boldblue 0	
-	    version=`parse_output $tmpinputfile "version"`
+    cecho "QUERY CACHE" boldblue 0
+	  version=`parse_output $tmpinputfile "version"`
 		query_cache_size=`parse_output $tmpinputfile "query_cache_size"`
 		query_cache_limit=`parse_output $tmpinputfile "query_cache_limit"`
 		query_cache_min_res_unit=`parse_output $tmpinputfile "query_cache_min_res_unit"`
@@ -821,13 +904,13 @@ check_sort_operations () {
 
 ## -- Sort Operations -- ##
 
-        cecho "SORT OPERATIONS" boldblue 0		
+      cecho "SORT OPERATIONS" boldblue 0
 	    sort_merge_passes=`parse_output $tmpinputfile "sort_merge_passes"`
-		sort_scan=`parse_output $tmpinputfile "sort_scan"`
-		sort_range=`parse_output $tmpinputfile "sort_range"`
-		total_sorts=`parse_output $tmpinputfile "total_sorts"`
-		sort_buffer_size=`parse_output $tmpinputfile "sort_buffer_size"`
-		read_rnd_buffer_size=`parse_output $tmpinputfile "read_rnd_buffer_size"`
+		  sort_scan=`parse_output $tmpinputfile "sort_scan"`
+		  sort_range=`parse_output $tmpinputfile "sort_range"`
+		  total_sorts=`parse_output $tmpinputfile "total_sorts"`
+		  sort_buffer_size=`parse_output $tmpinputfile "sort_buffer_size"`
+		  read_rnd_buffer_size=`parse_output $tmpinputfile "read_rnd_buffer_size"`
 		
         human_readable $sort_buffer_size sort_buffer_sizeHR
         cecho "Current sort_buffer_size = $sort_buffer_sizeHR $unit"
@@ -871,8 +954,8 @@ check_join_operations () {
 
 ## -- Joins -- ##
 
-        cecho "JOINS" boldblue 0	
-	    select_full_join=`parse_output $tmpinputfile "select_full_join"`
+    cecho "JOINS" boldblue 0
+	  select_full_join=`parse_output $tmpinputfile "select_full_join"`
 		select_range_check=`parse_output $tmpinputfile "select_range_check"`
 		join_buffer_size=`parse_output $tmpinputfile "join_buffer_size"`
 
@@ -930,8 +1013,8 @@ check_tmp_tables () {
 
 ## -- Temp Tables -- ##
 
-        cecho "TEMP TABLES" boldblue 0		
-	    created_tmp_tables=`parse_output $tmpinputfile "created_tmp_tables"`
+    cecho "TEMP TABLES" boldblue 0
+	  created_tmp_tables=`parse_output $tmpinputfile "created_tmp_tables"`
 		created_tmp_disk_tables=`parse_output $tmpinputfile "created_tmp_disk_tables"`
 		tmp_table_size=`parse_output $tmpinputfile "tmp_table_size"`
 		max_heap_table_size=`parse_output $tmpinputfile "max_heap_table_size"`
@@ -965,8 +1048,8 @@ check_tmp_tables () {
 check_open_files () {
 
 ## -- Open Files Limit -- ## 
-        cecho "OPEN FILES LIMIT" boldblue 0
-	    open_files_limit=`parse_output $tmpinputfile "open_files_limit"`
+    cecho "OPEN FILES LIMIT" boldblue 0
+	  open_files_limit=`parse_output $tmpinputfile "open_files_limit"`
 		open_files=`parse_output $tmpinputfile "open_files"`
 		
 		
@@ -1003,8 +1086,8 @@ check_table_cache () {
 
 ## -- Table Cache -- ##
 
-        cecho "TABLE CACHE" boldblue 0
-	    datadir=`parse_output $tmpinputfile "datadir"`
+    cecho "TABLE CACHE" boldblue 0
+	  datadir=`parse_output $tmpinputfile "datadir"`
 		table_cache=`parse_output $tmpinputfile "table_cache"`
 		table_open_cache=`parse_output $tmpinputfile "table_open_cache"`
 		table_definition_cache=`parse_output $tmpinputfile "table_definition_cache"`
@@ -1080,8 +1163,8 @@ check_table_locking () {
 
 ## -- Table Locking -- ##
 
-        cecho "TABLE LOCKING" boldblue 0		
-	    table_locks_waited=`parse_output $tmpinputfile "table_locks_waited"`
+    cecho "TABLE LOCKING" boldblue 0
+	  table_locks_waited=`parse_output $tmpinputfile "table_locks_waited"`
 		table_locks_immediate=`parse_output $tmpinputfile "table_locks_immediate"`
 		concurrent_insert=`parse_output $tmpinputfile "concurrent_insert"`
 		low_priority_updates=`parse_output $tmpinputfile "low_priority_updates"`
@@ -1127,9 +1210,9 @@ check_table_scans () {
 
 ## -- Table Scans -- ##
 
-        cecho "TABLE SCANS" boldblue 0
+    cecho "TABLE SCANS" boldblue 0
 		
-	    com_select=`parse_output $tmpinputfile "com_select"`
+	  com_select=`parse_output $tmpinputfile "com_select"`
 		read_rnd_next=`parse_output $tmpinputfile "handler_read_rnd_next"`
 		read_buffer_size=`parse_output $tmpinputfile "read_buffer_size"`
 	
@@ -1381,9 +1464,6 @@ shared_info () {
         
 
 get_system_info () {
-	inputfile="./output.txt"
-	outputfile="./newoutput.txt"
-	tmpinputfile="/tmp/output.txt"
 	read_input
 	if [ -f $outputfile ] ; then
 		rm -f $outputfile
@@ -1398,37 +1478,37 @@ get_system_info () {
 ## Optional Components Groups ##
 
 banner_info () {
-        shared_info
-        print_banner            ; echo
-        check_mysql_version     ; echo
-        post_uptime_warning     ; echo
+        shared_info             ;
+        print_banner            ; cecholine
+        check_mysql_version     ; cecholine
+        post_uptime_warning     ; cecholine
 }
 
 misc () {
-        shared_info
-        check_slow_queries      ; echo
-        check_binary_log        ; echo
-        check_threads           ; echo
-        check_used_connections  ; echo
-        check_innodb_status     ; echo
+        shared_info             ;
+        check_slow_queries      ; cecholine
+        check_binary_log        ; cecholine
+        check_threads           ; cecholine
+        check_used_connections  ; cecholine
+        check_innodb_status     ; cecholine
 }
 
 memory () {
-        shared_info
-        total_memory_used       ; echo
-        check_key_buffer_size   ; echo
-        check_query_cache       ; echo
-        check_sort_operations   ; echo
-        check_join_operations   ; echo
+        shared_info             ;
+        total_memory_used       ; cecholine
+        check_key_buffer_size   ; cecholine
+        check_query_cache       ; cecholine
+        check_sort_operations   ; cecholine
+        check_join_operations   ; cecholine
 }
 
 file () {
-        shared_info
-        check_open_files        ; echo
-        check_table_cache       ; echo
-        check_tmp_tables        ; echo
-        check_table_scans       ; echo
-        check_table_locking     ; echo
+        shared_info             ;
+        check_open_files        ; cecholine
+        check_table_cache       ; cecholine
+        check_tmp_tables        ; cecholine
+        check_table_scans       ; cecholine
+        check_table_locking     ; cecholine
 }
 
 all () {
@@ -1493,7 +1573,6 @@ prompt () {
 }
 
 ## Address environmental differences ##
-get_system_info
 # echo $ps_socket
 
 mode="$1"
@@ -1504,37 +1583,81 @@ elif [ "$1" != "prompt" ] && [ "$1" != "PROMPT" ] ; then
   login_validation
 fi
 
+runmode="$2"
+if [ -z "${2-}" ] ; then
+  runmode="1"
+fi
+
+inputfile="$3"
+if [ -z "${3-}" ] ; then
+  inputfile="./output.txt"
+else
+  if validate_url $inputfile; then
+      current=$(echo `date +"%Y%m%d%H%M%S%N" | cut -b 1-17`)
+      localfilename="./output${current}.txt"
+      curl ${inputfile} --output ${localfilename} --silent
+      inputfile=${localfilename}
+    else
+      echo "${inputfile} is invalid URL"
+      exit 0
+  fi
+fi
+
+outputfile="$4"
+if [ -z "${4-}" ] ; then
+  outputfile="./newoutput.txt"
+fi
+
+tmpinputfile="$5"
+if [ -z "${5-}" ] ; then
+  tmpinputfile="/tmp/output.txt"
+fi
+
+get_system_info
+
 case $mode in 
   all | ALL )
-    cecho " "
+    cechofirstline
     all
+    cecholastline
     ;;
   mem | memory |  MEM | MEMORY )
-    cecho " "
+    cechofirstline
     memory
+    cecholastline
     ;;
   file | FILE | disk | DISK )
-    cecho " "
+    cechofirstline
     file
+    cecholastline
     ;;
   banner | BANNER | header | HEADER | head | HEAD )
+    cechofirstline
     banner_info
+    cecholastline
     ;;
   misc | MISC | miscelaneous )
-    cecho " "
+    cechofirstline
     misc
+    cecholastline
     ;;
   innodb | INNODB )
+    cechofirstline
     banner_info
-    check_innodb_status ; echo
+    check_innodb_status ; cecho
+    cecholastline
     ;;
   prompt | PROMPT )
+    cechofirstline
     prompt
+    cecholastline
     ;;
   debug | DEBUG )
+    cechofirstline
     # Run everything, then dump state.
     all >/dev/null
     env
+    cecholastline
     ;;
   *)
     cecho "usage: $0 [ all | banner | file | innodb | memory | misc | prompt ]" boldred
